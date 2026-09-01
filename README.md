@@ -1,3 +1,6 @@
+# Student_attendance-leaveAPI
+To track attendance and leave of students
+
 # Student Attendance and Leave API
 
 FastAPI backend for tracking student attendance records and leave
