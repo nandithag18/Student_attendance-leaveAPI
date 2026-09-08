@@ -20,6 +20,19 @@ class StudentCreate(BaseModel):
     semester: int = Field(ge=1, le=12)
 
 
+class StudentUpdate(BaseModel):
+    """
+    Partial update — every field optional, so a client only sends what's
+    actually changing. `id` is never editable; it isn't listed here.
+    """
+
+    roll_number: str | None = Field(default=None, min_length=1, max_length=20)
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    email: EmailStr | None = None
+    department: str | None = Field(default=None, min_length=1, max_length=80)
+    semester: int | None = Field(default=None, ge=1, le=12)
+
+
 class StudentResponse(BaseModel):
     """What the API returns after creating (or fetching) a student."""
 
