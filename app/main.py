@@ -1,5 +1,5 @@
-"""
-Student Attendance and Leave API — application entrypoint.
+﻿"""
+Student Attendance and Leave API -- application entrypoint.
 
 Run locally with:
     uvicorn app.main:app --reload
@@ -8,7 +8,7 @@ Run locally with:
 from fastapi import FastAPI
 
 from app.config import settings
-from app.routers import health, students
+from app.routers import auth, health, students
 
 app = FastAPI(
     title=settings.app_name,
@@ -16,6 +16,7 @@ app = FastAPI(
 )
 
 app.include_router(health.router)
+app.include_router(auth.router)
 app.include_router(students.router)
 
 

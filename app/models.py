@@ -1,5 +1,5 @@
-"""
-ORM models — mirrors the entities defined in API_DESIGN.md.
+﻿"""
+ORM models -- mirrors the entities defined in API_DESIGN.md.
 """
 
 import enum
@@ -27,6 +27,30 @@ class LeaveStatus(str, enum.Enum):
     pending = "pending"
     approved = "approved"
     rejected = "rejected"
+
+
+class UserRole(str, enum.Enum):
+    student = "student"
+    faculty = "faculty"
+    admin = "admin"
+
+
+class User(Base):
+    """
+    Login identity -- separate from Student on purpose. A Student row
+    is an academic record; a User row is a set of login credentials.
+    Faculty/admin accounts need to exist without being a "student",
+    and a student's academic data shouldn't be deleted just because
+    their login is deactivated (or vice versa).
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    hashed_password: Mapped[str] = mapped_column(String(255))
+    role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.student)
+    is_active: Mapped[bool] = mapped_column(default=True)
 
 
 class Student(Base):

@@ -1,5 +1,5 @@
-"""
-Pydantic schemas — request/response contracts, matching API_DESIGN.md.
+﻿"""
+Pydantic schemas -- request/response contracts, matching API_DESIGN.md.
 
 Separate from app/models.py (the DB/ORM layer) on purpose: schemas are
 what the API exposes to clients, models are what's stored. Keeping
@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class StudentCreate(BaseModel):
-    """What a client sends to create a student. No `id` — the DB assigns it."""
+    """What a client sends to create a student. No `id` -- the DB assigns it."""
 
     roll_number: str = Field(min_length=1, max_length=20, examples=["24BCE5285"])
     name: str = Field(min_length=1, max_length=120)
@@ -22,7 +22,7 @@ class StudentCreate(BaseModel):
 
 class StudentUpdate(BaseModel):
     """
-    Partial update — every field optional, so a client only sends what's
+    Partial update -- every field optional, so a client only sends what's
     actually changing. `id` is never editable; it isn't listed here.
     """
 
@@ -36,7 +36,7 @@ class StudentUpdate(BaseModel):
 class StudentResponse(BaseModel):
     """What the API returns after creating (or fetching) a student."""
 
-    model_config = ConfigDict(from_attributes=True)  # allows building from an ORM object
+    model_config = ConfigDict(from_attributes=True)
 
     id: int
     roll_number: str
@@ -47,9 +47,30 @@ class StudentResponse(BaseModel):
 
 
 class PaginatedStudents(BaseModel):
-    """Envelope for GET /students — items plus enough info to page through the rest."""
+    """Envelope for GET /students -- items plus enough info to page through the rest."""
 
     items: list[StudentResponse]
     total: int
     limit: int
     offset: int
+
+
+class UserCreate(BaseModel):
+    """What a client sends to register. No `role` here -- see note in auth router."""
+
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+
+
+class UserResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: EmailStr
+    role: str
+    is_active: bool
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
