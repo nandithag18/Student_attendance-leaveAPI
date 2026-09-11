@@ -57,6 +57,20 @@ async def create_student(
 
 @router.get("", response_model=PaginatedStudents)
 async def list_students(
+    search: str | None = Query(
+        default=None,
+        description="Search by name, email, or roll number",
+    ),
+    department: str | None = Query(
+        default=None,
+        description="Filter by department",
+    ),
+    semester: int | None = Query(
+        default=None,
+        ge=1,
+        le=12,
+        description="Filter by semester",
+    ),
     limit: int = Query(
         20,
         ge=1,
@@ -74,15 +88,35 @@ async def list_students(
 
     query = select(Student)
 
+    # Students can only see their own record
     if current_user.role == "student":
         query = query.where(Student.email == current_user.email)
 
+    # Search by name, email, or roll number
+    if search:
+        search_pattern = f"%{search}%"
+        query = query.where(
+            Student.name.ilike(search_pattern)
+            | Student.email.ilike(search_pattern)
+            | Student.roll_number.ilike(search_pattern)
+        )
+
+    # Filter by department
+    if department:
+        query = query.where(Student.department == department)
+
+    # Filter by semester
+    if semester is not None:
+        query = query.where(Student.semester == semester)
+
+    # Count only filtered records
     total = (
         await db.execute(
             select(func.count()).select_from(query.subquery())
         )
     ).scalar_one()
 
+    # Pagination is performed by the database
     result = await db.execute(
         query.order_by(Student.id.asc())
         .limit(limit)
@@ -108,6 +142,7 @@ async def get_student(
 
     query = select(Student).where(Student.id == student_id)
 
+    # Students can only access their own record
     if current_user.role == "student":
         query = query.where(Student.email == current_user.email)
 
@@ -133,6 +168,7 @@ async def update_student(
 
     query = select(Student).where(Student.id == student_id)
 
+    # Students can only update their own record
     if current_user.role == "student":
         query = query.where(Student.email == current_user.email)
 
@@ -147,6 +183,7 @@ async def update_student(
 
     updates = payload.model_dump(exclude_unset=True)
 
+    # Prevent changing ownership
     if current_user.role == "student":
         if "email" in updates and updates["email"] != current_user.email:
             raise HTTPException(
@@ -179,6 +216,7 @@ async def delete_student(
 
     query = select(Student).where(Student.id == student_id)
 
+    # Students can only delete their own record
     if current_user.role == "student":
         query = query.where(Student.email == current_user.email)
 
