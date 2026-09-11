@@ -1,6 +1,7 @@
 ﻿"""
-Student endpoints. POST/PATCH/DELETE require a signed-in user
-(Depends(get_current_user)) -- GET endpoints stay open.
+Student endpoints.
+All student operations require a signed-in user.
+Student users can only access their own records.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -11,19 +12,36 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import get_current_user
 from app.database import get_db
 from app.models import AttendanceRecord, LeaveRequest, Student, User
-from app.schemas import PaginatedStudents, StudentCreate, StudentResponse, StudentUpdate
+from app.schemas import (
+    PaginatedStudents,
+    StudentCreate,
+    StudentResponse,
+    StudentUpdate,
+)
 
 router = APIRouter(prefix="/students", tags=["students"])
 
 
-@router.post("", response_model=StudentResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=StudentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_student(
     payload: StudentCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Student:
+
+    if current_user.role == "student" and payload.email != current_user.email:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only create a student record for your own account.",
+        )
+
     student = Student(**payload.model_dump())
     db.add(student)
+
     try:
         await db.commit()
     except IntegrityError:
@@ -32,34 +50,76 @@ async def create_student(
             status_code=status.HTTP_409_CONFLICT,
             detail="A student with this roll_number or email already exists.",
         )
+
     await db.refresh(student)
     return student
 
 
 @router.get("", response_model=PaginatedStudents)
 async def list_students(
-    limit: int = Query(20, ge=1, le=100, description="Max items to return (1-100)"),
-    offset: int = Query(0, ge=0, description="Number of items to skip"),
+    limit: int = Query(
+        20,
+        ge=1,
+        le=100,
+        description="Max items to return (1-100)",
+    ),
+    offset: int = Query(
+        0,
+        ge=0,
+        description="Number of items to skip",
+    ),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> PaginatedStudents:
-    total = (await db.execute(select(func.count()).select_from(Student))).scalar_one()
+
+    query = select(Student)
+
+    if current_user.role == "student":
+        query = query.where(Student.email == current_user.email)
+
+    total = (
+        await db.execute(
+            select(func.count()).select_from(query.subquery())
+        )
+    ).scalar_one()
 
     result = await db.execute(
-        select(Student).order_by(Student.id.asc()).limit(limit).offset(offset)
+        query.order_by(Student.id.asc())
+        .limit(limit)
+        .offset(offset)
     )
+
     students = result.scalars().all()
 
-    return PaginatedStudents(items=students, total=total, limit=limit, offset=offset)
+    return PaginatedStudents(
+        items=students,
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/{student_id}", response_model=StudentResponse)
-async def get_student(student_id: int, db: AsyncSession = Depends(get_db)) -> Student:
-    student = await db.get(Student, student_id)
+async def get_student(
+    student_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Student:
+
+    query = select(Student).where(Student.id == student_id)
+
+    if current_user.role == "student":
+        query = query.where(Student.email == current_user.email)
+
+    result = await db.execute(query)
+    student = result.scalar_one_or_none()
+
     if student is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Student with id {student_id} not found.",
         )
+
     return student
 
 
@@ -70,7 +130,15 @@ async def update_student(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Student:
-    student = await db.get(Student, student_id)
+
+    query = select(Student).where(Student.id == student_id)
+
+    if current_user.role == "student":
+        query = query.where(Student.email == current_user.email)
+
+    result = await db.execute(query)
+    student = result.scalar_one_or_none()
+
     if student is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -78,6 +146,14 @@ async def update_student(
         )
 
     updates = payload.model_dump(exclude_unset=True)
+
+    if current_user.role == "student":
+        if "email" in updates and updates["email"] != current_user.email:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You cannot change the ownership of your student record.",
+            )
+
     for field, value in updates.items():
         setattr(student, field, value)
 
@@ -89,6 +165,7 @@ async def update_student(
             status_code=status.HTTP_409_CONFLICT,
             detail="Update conflicts with an existing student's roll_number or email.",
         )
+
     await db.refresh(student)
     return student
 
@@ -99,7 +176,15 @@ async def delete_student(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> None:
-    student = await db.get(Student, student_id)
+
+    query = select(Student).where(Student.id == student_id)
+
+    if current_user.role == "student":
+        query = query.where(Student.email == current_user.email)
+
+    result = await db.execute(query)
+    student = result.scalar_one_or_none()
+
     if student is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -113,6 +198,7 @@ async def delete_student(
             .where(AttendanceRecord.student_id == student_id)
         )
     ).scalar_one()
+
     leave_count = (
         await db.execute(
             select(func.count())
