@@ -1,7 +1,11 @@
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+import logging
 
+from sqlalchemy.exc import SQLAlchemyError
+
+logger = logging.getLogger(__name__)
 from app.models import AttendanceRecord, LeaveRequest, Student
 
 
@@ -89,49 +93,90 @@ async def update_student(
     student: Student,
     updates: dict,
 ) -> Student:
-
-    for field, value in updates.items():
-        setattr(student, field, value)
-
     try:
+        for field, value in updates.items():
+            setattr(student, field, value)
+
         await db.commit()
-    except IntegrityError:
+        await db.refresh(student)
+
+        logger.info(
+            "Student updated successfully | student_id=%s",
+            student.id,
+        )
+
+        return student
+
+    except SQLAlchemyError:
         await db.rollback()
+
+        logger.exception(
+            "Failed to update student | student_id=%s",
+            student.id,
+        )
+
         raise
-
-    await db.refresh(student)
-
-    return student
 
 
 async def delete_student(
     db: AsyncSession,
     student: Student,
 ) -> None:
+    try:
+        attendance_count = (
+            await db.execute(
+                select(func.count())
+                .select_from(AttendanceRecord)
+                .where(
+                    AttendanceRecord.student_id == student.id
+                )
+            )
+        ).scalar_one()
 
-    attendance_count = (
-        await db.execute(
-            select(func.count())
-            .select_from(AttendanceRecord)
-            .where(AttendanceRecord.student_id == student.id)
-        )
-    ).scalar_one()
+        leave_count = (
+            await db.execute(
+                select(func.count())
+                .select_from(LeaveRequest)
+                .where(
+                    LeaveRequest.student_id == student.id
+                )
+            )
+        ).scalar_one()
 
-    leave_count = (
-        await db.execute(
-            select(func.count())
-            .select_from(LeaveRequest)
-            .where(LeaveRequest.student_id == student.id)
-        )
-    ).scalar_one()
+        if attendance_count > 0 or leave_count > 0:
+            raise ValueError(
+                f"Cannot delete student {student.id}: "
+                f"{attendance_count} attendance record(s) and "
+                f"{leave_count} leave request(s) exist."
+            )
 
-    if attendance_count > 0 or leave_count > 0:
-        raise ValueError(
-            f"Cannot delete student {student.id}: "
-            f"{attendance_count} attendance record(s) and "
-            f"{leave_count} leave request(s) exist. Remove or "
-            "reassign those first."
+        await db.delete(student)
+        await db.commit()
+
+        logger.info(
+            "Student deleted successfully | student_id=%s",
+            student.id,
         )
+
+    except ValueError:
+        await db.rollback()
+
+        logger.warning(
+            "Student deletion blocked | student_id=%s",
+            student.id,
+        )
+
+        raise
+
+    except SQLAlchemyError:
+        await db.rollback()
+
+        logger.exception(
+            "Database error while deleting student | student_id=%s",
+            student.id,
+        )
+
+        raise
 
     await db.delete(student)
     await db.commit()

@@ -6,10 +6,12 @@ Run locally with:
 """
 
 from fastapi import FastAPI
+from app.logging_config import setup_logging
 
 from app.config import settings
 from app.routers import auth, health, students
 
+setup_logging()
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
