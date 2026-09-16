@@ -3,22 +3,20 @@ Student endpoints.
 All student operations require a signed-in user.
 Student users can only access their own records.
 """
-
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
 from app.database import get_db
-from app.models import AttendanceRecord, LeaveRequest, Student, User
+from app.models import Student, User
 from app.schemas import (
     PaginatedStudents,
     StudentCreate,
     StudentResponse,
     StudentUpdate,
 )
-
+from app.services import student_service
 router = APIRouter(prefix="/students", tags=["students"])
 
 
@@ -39,13 +37,12 @@ async def create_student(
             detail="You can only create a student record for your own account.",
         )
 
-    student = Student(**payload.model_dump())
-    db.add(student)
-
     try:
-        await db.commit()
+        return await student_service.create_student(
+            db,
+            payload.model_dump(),
+        )
     except IntegrityError:
-        await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="A student with this roll_number or email already exists.",
@@ -71,59 +68,23 @@ async def list_students(
         le=12,
         description="Filter by semester",
     ),
-    limit: int = Query(
-        20,
-        ge=1,
-        le=100,
-        description="Max items to return (1-100)",
-    ),
-    offset: int = Query(
-        0,
-        ge=0,
-        description="Number of items to skip",
-    ),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> PaginatedStudents:
 
-    query = select(Student)
+    email = current_user.email if current_user.role == "student" else None
 
-    # Students can only see their own record
-    if current_user.role == "student":
-        query = query.where(Student.email == current_user.email)
-
-    # Search by name, email, or roll number
-    if search:
-        search_pattern = f"%{search}%"
-        query = query.where(
-            Student.name.ilike(search_pattern)
-            | Student.email.ilike(search_pattern)
-            | Student.roll_number.ilike(search_pattern)
-        )
-
-    # Filter by department
-    if department:
-        query = query.where(Student.department == department)
-
-    # Filter by semester
-    if semester is not None:
-        query = query.where(Student.semester == semester)
-
-    # Count only filtered records
-    total = (
-        await db.execute(
-            select(func.count()).select_from(query.subquery())
-        )
-    ).scalar_one()
-
-    # Pagination is performed by the database
-    result = await db.execute(
-        query.order_by(Student.id.asc())
-        .limit(limit)
-        .offset(offset)
+    students, total = await student_service.list_students(
+        db=db,
+        search=search,
+        department=department,
+        semester=semester,
+        email=email,
+        limit=limit,
+        offset=offset,
     )
-
-    students = result.scalars().all()
 
     return PaginatedStudents(
         items=students,
@@ -140,14 +101,13 @@ async def get_student(
     current_user: User = Depends(get_current_user),
 ) -> Student:
 
-    query = select(Student).where(Student.id == student_id)
+    email = current_user.email if current_user.role == "student" else None
 
-    # Students can only access their own record
-    if current_user.role == "student":
-        query = query.where(Student.email == current_user.email)
-
-    result = await db.execute(query)
-    student = result.scalar_one_or_none()
+    student = await student_service.get_student(
+        db,
+        student_id,
+        email,
+    )
 
     if student is None:
         raise HTTPException(
@@ -156,7 +116,6 @@ async def get_student(
         )
 
     return student
-
 
 @router.patch("/{student_id}", response_model=StudentResponse)
 async def update_student(
@@ -166,14 +125,13 @@ async def update_student(
     current_user: User = Depends(get_current_user),
 ) -> Student:
 
-    query = select(Student).where(Student.id == student_id)
+    email = current_user.email if current_user.role == "student" else None
 
-    # Students can only update their own record
-    if current_user.role == "student":
-        query = query.where(Student.email == current_user.email)
-
-    result = await db.execute(query)
-    student = result.scalar_one_or_none()
+    student = await student_service.get_student(
+        db,
+        student_id,
+        email,
+    )
 
     if student is None:
         raise HTTPException(
@@ -183,7 +141,6 @@ async def update_student(
 
     updates = payload.model_dump(exclude_unset=True)
 
-    # Prevent changing ownership
     if current_user.role == "student":
         if "email" in updates and updates["email"] != current_user.email:
             raise HTTPException(
@@ -191,20 +148,18 @@ async def update_student(
                 detail="You cannot change the ownership of your student record.",
             )
 
-    for field, value in updates.items():
-        setattr(student, field, value)
-
     try:
-        await db.commit()
+        return await student_service.update_student(
+            db,
+            student,
+            updates,
+        )
     except IntegrityError:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Update conflicts with an existing student's roll_number or email.",
         )
-
-    await db.refresh(student)
-    return student
 
 
 @router.delete("/{student_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -214,14 +169,13 @@ async def delete_student(
     current_user: User = Depends(get_current_user),
 ) -> None:
 
-    query = select(Student).where(Student.id == student_id)
+    email = current_user.email if current_user.role == "student" else None
 
-    # Students can only delete their own record
-    if current_user.role == "student":
-        query = query.where(Student.email == current_user.email)
-
-    result = await db.execute(query)
-    student = result.scalar_one_or_none()
+    student = await student_service.get_student(
+        db,
+        student_id,
+        email,
+    )
 
     if student is None:
         raise HTTPException(
@@ -229,31 +183,16 @@ async def delete_student(
             detail=f"Student with id {student_id} not found.",
         )
 
-    attendance_count = (
-        await db.execute(
-            select(func.count())
-            .select_from(AttendanceRecord)
-            .where(AttendanceRecord.student_id == student_id)
+    try:
+        await student_service.delete_student(
+            db,
+            student,
         )
-    ).scalar_one()
-
-    leave_count = (
-        await db.execute(
-            select(func.count())
-            .select_from(LeaveRequest)
-            .where(LeaveRequest.student_id == student_id)
-        )
-    ).scalar_one()
-
-    if attendance_count > 0 or leave_count > 0:
+    except ValueError as exc:
+        await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"Cannot delete student {student_id}: "
-                f"{attendance_count} attendance record(s) and "
-                f"{leave_count} leave request(s) exist. Remove or "
-                "reassign those first."
-            ),
+            detail=str(exc),
         )
 
     await db.delete(student)
