@@ -1,8 +1,17 @@
 ﻿"""
-Student endpoints.
+Student API endpoints.
 
-All student operations require a signed-in user.
-Student users can only access their own records.
+Provides student CRUD operations with:
+
+- JWT authentication
+- Role-based authorization
+- Student resource ownership
+- Search and filtering
+- Pagination
+- Consistent error handling
+- Structured logging
+- Safe transaction rollback
+- OpenAPI documentation metadata
 """
 
 import logging
@@ -25,9 +34,10 @@ from app.services import student_service
 
 logger = logging.getLogger(__name__)
 
+
 router = APIRouter(
     prefix="/students",
-    tags=["students"],
+    tags=["Students"],
 )
 
 
@@ -35,12 +45,35 @@ router = APIRouter(
     "",
     response_model=StudentResponse,
     status_code=status.HTTP_201_CREATED,
+    summary="Create student",
+    description=(
+        "Create a new student record. "
+        "Student users can only create a record for their own account. "
+        "Faculty and admin users can create student records."
+    ),
+    responses={
+        201: {
+            "description": "Student created successfully",
+        },
+        403: {
+            "description": "User is not allowed to create this record",
+        },
+        409: {
+            "description": "Email or roll number already exists",
+        },
+        500: {
+            "description": "Internal database error",
+        },
+    },
 )
 async def create_student(
     payload: StudentCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Student:
+    """
+    Create a student record.
+    """
 
     if (
         current_user.role == "student"
@@ -48,13 +81,16 @@ async def create_student(
     ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only create a student record for your own account.",
+            detail=(
+                "You can only create a student record "
+                "for your own account."
+            ),
         )
 
     try:
         student = await student_service.create_student(
-            db,
-            payload.model_dump(),
+            db=db,
+            student_data=payload.model_dump(),
         )
 
         logger.info(
@@ -74,7 +110,10 @@ async def create_student(
 
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="A student with this roll_number or email already exists.",
+            detail=(
+                "A student with this roll_number "
+                "or email already exists."
+            ),
         )
 
     except SQLAlchemyError:
@@ -93,6 +132,23 @@ async def create_student(
 @router.get(
     "",
     response_model=PaginatedStudents,
+    summary="List students",
+    description=(
+        "Retrieve students using optional search, department, "
+        "semester, limit, and offset filters. "
+        "Student users can only see their own record."
+    ),
+    responses={
+        200: {
+            "description": "Students retrieved successfully",
+        },
+        401: {
+            "description": "Authentication required",
+        },
+        500: {
+            "description": "Internal database error",
+        },
+    },
 )
 async def list_students(
     search: str | None = Query(
@@ -113,14 +169,19 @@ async def list_students(
         default=20,
         ge=1,
         le=100,
+        description="Maximum number of students to return",
     ),
     offset: int = Query(
         default=0,
         ge=0,
+        description="Number of records to skip",
     ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> PaginatedStudents:
+    """
+    List students with authorization and filtering.
+    """
 
     email = (
         current_user.email
@@ -140,7 +201,8 @@ async def list_students(
         )
 
         logger.info(
-            "Students listed successfully | total=%s | limit=%s | offset=%s",
+            "Students listed successfully | "
+            "total=%s | limit=%s | offset=%s",
             total,
             limit,
             offset,
@@ -169,12 +231,32 @@ async def list_students(
 @router.get(
     "/{student_id}",
     response_model=StudentResponse,
+    summary="Get student by ID",
+    description=(
+        "Retrieve a student by ID. "
+        "Student users can only retrieve their own record, "
+        "while faculty and admin users can retrieve any record."
+    ),
+    responses={
+        200: {
+            "description": "Student retrieved successfully",
+        },
+        404: {
+            "description": "Student not found",
+        },
+        500: {
+            "description": "Internal database error",
+        },
+    },
 )
 async def get_student(
     student_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Student:
+    """
+    Retrieve a student by ID.
+    """
 
     email = (
         current_user.email
@@ -184,16 +266,17 @@ async def get_student(
 
     try:
         student = await student_service.get_student(
-            db,
-            student_id,
-            email,
+            db=db,
+            student_id=student_id,
+            email=email,
         )
 
     except SQLAlchemyError:
         await db.rollback()
 
         logger.exception(
-            "Unexpected database error while retrieving student | student_id=%s",
+            "Unexpected database error while retrieving student "
+            "| student_id=%s",
             student_id,
         )
 
@@ -203,6 +286,11 @@ async def get_student(
         )
 
     if student is None:
+        logger.warning(
+            "Student not found | student_id=%s",
+            student_id,
+        )
+
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Student with id {student_id} not found.",
@@ -219,6 +307,29 @@ async def get_student(
 @router.patch(
     "/{student_id}",
     response_model=StudentResponse,
+    summary="Update student",
+    description=(
+        "Update an existing student record. "
+        "Student users can only update their own record "
+        "and cannot change record ownership."
+    ),
+    responses={
+        200: {
+            "description": "Student updated successfully",
+        },
+        403: {
+            "description": "User cannot modify this record",
+        },
+        404: {
+            "description": "Student not found",
+        },
+        409: {
+            "description": "Email or roll number already exists",
+        },
+        500: {
+            "description": "Internal database error",
+        },
+    },
 )
 async def update_student(
     student_id: int,
@@ -226,6 +337,9 @@ async def update_student(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Student:
+    """
+    Update a student record.
+    """
 
     email = (
         current_user.email
@@ -235,9 +349,9 @@ async def update_student(
 
     try:
         student = await student_service.get_student(
-            db,
-            student_id,
-            email,
+            db=db,
+            student_id=student_id,
+            email=email,
         )
 
         if student is None:
@@ -257,13 +371,16 @@ async def update_student(
             ):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail="You cannot change the ownership of your student record.",
+                    detail=(
+                        "You cannot change the ownership "
+                        "of your student record."
+                    ),
                 )
 
         updated_student = await student_service.update_student(
-            db,
-            student,
-            updates,
+            db=db,
+            student=student,
+            updates=updates,
         )
 
         logger.info(
@@ -290,7 +407,8 @@ async def update_student(
         await db.rollback()
 
         logger.exception(
-            "Unexpected database error while updating student | student_id=%s",
+            "Unexpected database error while updating student "
+            "| student_id=%s",
             student_id,
         )
 
@@ -303,12 +421,38 @@ async def update_student(
 @router.delete(
     "/{student_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete student",
+    description=(
+        "Delete a student record. "
+        "The operation may be blocked if the student has "
+        "dependent attendance or leave records."
+    ),
+    responses={
+        204: {
+            "description": "Student deleted successfully",
+        },
+        404: {
+            "description": "Student not found",
+        },
+        409: {
+            "description": (
+                "Student cannot be deleted because dependent "
+                "records exist"
+            ),
+        },
+        500: {
+            "description": "Internal database error",
+        },
+    },
 )
 async def delete_student(
     student_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> None:
+    """
+    Delete a student record.
+    """
 
     email = (
         current_user.email
@@ -318,9 +462,9 @@ async def delete_student(
 
     try:
         student = await student_service.get_student(
-            db,
-            student_id,
-            email,
+            db=db,
+            student_id=student_id,
+            email=email,
         )
 
         if student is None:
@@ -330,8 +474,8 @@ async def delete_student(
             )
 
         await student_service.delete_student(
-            db,
-            student,
+            db=db,
+            student=student,
         )
 
         logger.info(
@@ -356,7 +500,8 @@ async def delete_student(
         await db.rollback()
 
         logger.exception(
-            "Unexpected database error while deleting student | student_id=%s",
+            "Unexpected database error while deleting student "
+            "| student_id=%s",
             student_id,
         )
 

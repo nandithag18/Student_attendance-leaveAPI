@@ -13,8 +13,40 @@ from app.routers import auth, health, students
 
 setup_logging()
 app = FastAPI(
-    title=settings.app_name,
-    version=settings.app_version,
+    title="Student Attendance and Leave API",
+    description="""
+REST API for managing students, attendance, and leave requests.
+
+### Features
+- JWT authentication
+- Role-based access control
+- Student CRUD operations
+- Resource ownership authorization
+- Search, filtering, and pagination
+- Attendance and leave management
+- Structured logging
+- Error handling and transaction rollback
+
+### Authentication
+Use a JWT token in the following format:
+
+Authorization: Bearer <access_token>
+
+### Roles
+- Student: Can access their own student record.
+- Faculty: Can access student records.
+- Admin: Can perform administrative operations.
+""",
+    version="1.0.0",
+    contact={
+        "name": "Student Attendance and Leave API Team",
+    },
+    license_info={
+        "name": "MIT",
+    },
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
 )
 
 app.include_router(health.router)
