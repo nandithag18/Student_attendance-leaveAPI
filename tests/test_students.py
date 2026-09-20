@@ -134,12 +134,10 @@ def test_student_can_access_only_own_record():
 
     assert response.status_code == 404
 
-    called_db = mock_get.await_args.args[0]
-
     mock_get.assert_awaited_once_with(
-        called_db,
-        99,
-        "student@example.com",
+        db=mock_get.await_args.kwargs["db"],
+        student_id=99,
+        email="student@example.com",
     )
 
 
@@ -157,12 +155,10 @@ def test_faculty_can_access_any_student_record():
     assert response.status_code == 200
     assert response.json()["id"] == 1
 
-    called_db = mock_get.await_args.args[0]
-
     mock_get.assert_awaited_once_with(
-        called_db,
-        1,
-        None,
+        db=mock_get.await_args.kwargs["db"],
+        student_id=1,
+        email=None,
     )
 
 

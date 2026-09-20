@@ -48,7 +48,12 @@ Authorization: Bearer <access_token>
     redoc_url="/redoc",
     openapi_url="/openapi.json",
 )
-
+@app.get("/health", tags=["Health"])
+async def health_check():
+    return {
+        "status": "healthy",
+        "service": "Student Attendance Leave API"
+    }
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(students.router)
